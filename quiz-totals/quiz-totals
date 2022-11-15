@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+
+const process = require("process");
+const fs = require("fs");
+const csv = require("csv/sync");
+
+const Columns = {
+  email: "Student Email",
+  name: "Student Name",
+  score: "% Score",
+  quiz: "Quiz Name",
+};
+
+const debugStudentEmail = "email of student";
+
+const [_node, _exec, fileName] = process.argv;
+
+const files = fs
+  .readdirSync(process.cwd())
+  .filter((f) => f.endsWith(".csv") && f !== fileName);
+
+const filesContents = files.map((f) => fs.readFileSync(f, "utf8"));
+const quizzesLength = filesContents.length;
+const fullQuizzes = filesContents.flatMap((fc) =>
+  csv.parse(fc, { columns: true })
+);
+
+const shrinkedQuizzes = fullQuizzes.map(dropQuestionsColumns);
+const studentQuizzes = removeQuizDuplicatesByTakingMax(shrinkedQuizzes).map(
+  (quiz) => dropOtherColumns(quiz)
+);
+
+// console.log(
+//   studentQuizzes
+//     .filter((q) => q[Columns.email] === debugStudentEmail)
+//     .sort((a, b) => a[Columns.quiz] > b[Columns.quiz])
+// );
+
+const quizzesAverageByStudent = makeQuizzesAverageByStudent(
+  studentQuizzes,
+  quizzesLength
+).sort((a, b) => a[Columns.email].localeCompare(b[Columns.email]));
+
+const output = csv.stringify(quizzesAverageByStudent, { header: true });
+console.table(quizzesAverageByStudent);
+
+fs.writeFileSync(fileName, output);
+
+function makeQuizzesAverageByStudent(quizzes, quizzesLength) {
+  let byStudentAverage = {};
+
+  quizzes.forEach((quiz) => {
+    const studentEmail = quiz[Columns.email];
+
+    if (!byStudentAverage[studentEmail]) {
+      byStudentAverage[studentEmail] = {
+        ...quiz,
+        [Columns.score]: [quiz[Columns.score]],
+      };
+    } else {
+      byStudentAverage[studentEmail][Columns.score].push(quiz[Columns.score]);
+    }
+  });
+
+  // console.log(byStudentAverage[debugStudentEmail]);
+
+  return Object.values(byStudentAverage).map((quiz) => {
+    const scores = quiz[Columns.score];
+    const average = sum(scores) / quizzesLength;
+    const score = Math.round(average);
+
+    // if (quiz["Student Email"] === debugStudentEmail) {
+    //   console.log({ scores, average, score });
+    // }
+
+    const data = {
+      ...quiz,
+      ["Score Percent"]: `${score}%`,
+      ["Score Number"]: score,
+      ["Score Normal"]: score / 100,
+    };
+
+    delete data[Columns.score];
+
+    return data;
+  });
+}
+
+function removeQuizDuplicatesByTakingMax(quizzes) {
+  const groupedQuizzes = {};
+
+  quizzes.forEach((quiz) => {
+    const studentEmail = quiz[Columns.email];
+    const quizName = quiz["Quiz Name"];
+    const quizScore = Number(quiz["% Score"]);
+
+    if (!groupedQuizzes[studentEmail]) groupedQuizzes[studentEmail] = {};
+    if (!groupedQuizzes[studentEmail][quizName])
+      groupedQuizzes[studentEmail][quizName] = quiz;
+
+    const existingQuizScore =
+      groupedQuizzes[studentEmail][quizName][Columns.score];
+
+    if (quizScore > existingQuizScore)
+      groupedQuizzes[studentEmail][quizName] = quiz;
+  });
+
+  return Object.values(groupedQuizzes).flatMap((quizzes) =>
+    Object.values(quizzes)
+  );
+}
+
+function dropQuestionsColumns(quiz) {
+  return Object.fromEntries(
+    Object.entries(quiz).filter(
+      ([column]) => !column.match(/(Correct\?)|Response|(Question #\d+)/)
+    )
+  );
+}
+
+function dropOtherColumns(quiz) {
+  return {
+    [Columns.name]: quiz[Columns.name].trim(),
+    [Columns.email]: quiz[Columns.email].trim(),
+    [Columns.score]: Number(quiz[Columns.score]),
+  };
+}
+
+function sum(arr) {
+  return arr.reduce((a, b) => a + b, 0);
+}
